@@ -24,18 +24,14 @@ The "pppUart" property of the cmux class was included just for testing/troublesh
 command is sent to stablish the data mode on a channel (let's say channel 1), a physical UART can be assigned to this 
 property like this:
 
-'
-cmux7608.channels[1].pppUart = uartCmux1
-'
+    cmux7608.channels[1].pppUart = uartCmux1
 
 where "uartCmux1" is another physical UART configured in the ESP32. That UART can be connected to a UART on another ESP32 where 
 it will be used to set the PPP network connection like this:
 
-'
-ppp = network.PPP(<The physical UART of the 2nd ESP32>)
-ppp.active(True)
-ppp.connect()
-'
+    ppp = network.PPP(<The physical UART of the 2nd ESP32>)
+    ppp.active(True)
+    ppp.connect()
 
 Try it, enjoy it and if you think that you can help to finish the VirtualUART class so it can be correctly used by 
 the network.ppp service, please let me know. Your collaboration on this is absolutely welcome :-)
