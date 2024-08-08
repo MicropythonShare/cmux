@@ -11,9 +11,10 @@ it :-) )...
 The cmux class was developed following the standard definitions from 3GPP TS 07.10 V7.2.0 specifications 
 (https://www.3gpp.org/ftp/Specs/archive/07_series/07.10/), and adjusted to the SIMCom modems with the help of this 
 document: https://microchip.ua/simcom/2G/Application%20Notes/SIM800%20Series_Multiplexer_Application%20Note_V1.04.pdf. 
+
 Some modems can have small variations on these specifications, this lib was done for SIMCom A7608SA-H, and it could 
 requiere small changes depending on the modem to be used.
-Also it is implementing for now the basic functionalities to start the cmux protocol, open the control a virtual UART 
+Also it is implementing for now the basic functionalities to start the cmux protocol, open the control and virtual UART 
 channels, and send AT commands on them (commands mode) or tranparently pass data over a channel (data mode).
 
 In the example, the startModem funtion is used to setup the connection to the SIMCom A7608SA-H modem via the physical UART. 
