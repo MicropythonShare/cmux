@@ -62,6 +62,11 @@ def cmux_handler(cmux):
                                     elif controlByte == 0x53:
                                         ## TODO: DISC frame
                                         validFrame = True
+                                        
+                                    elif controlByte == 0xFF:
+                                        ## TODO: Unknown frame, sent by UBLOX SARA R5 modem when opening channel
+                                        ## F9 01 FF 09 E1 05 0B 0D 8F F9
+                                        validFrame = True
 
                                     elif controlByte == 0xEF:
                                         # UIH frame
