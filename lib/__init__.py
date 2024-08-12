@@ -3,7 +3,7 @@ from time import sleep, ticks_diff, ticks_ms
 
 from .cmux_constants import *
 from .cmux_handler import cmux_handler
-from .virtual_uart import VirtualUART
+from .virtual_uart import VitualUARTConn
 
 
 def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
@@ -27,14 +27,28 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
             return data.decode("utf-8")
 
 
+class CmuxChannel():
+    def __init__(self):
+        self.virtualUARTconn = VitualUARTConn("ucUART", "modemUART", 2048)
+        self.uaReceived = False
+        self.status = CHANNEL_CLOSED
+        self.v24Signals = None
+        self.pppUart = None
+
+
+    def clear_uarts_buffers(self):
+        uarts = self.virtualUARTconn.ucUART.clear_rx()
+        uarts = self.virtualUARTconn.modemUART.clear_rx()
+
+
 class cmux():
-    def __init__(self, uartModem):
-        self.uartModem = uartModem
-        self.uartBufferIn = b''
+    def __init__(self, physicalUART):
+        self.physicalUART = physicalUART
+        self.physicalUartBufferIn = b''
         self.cmuxProtocolStarted = False
         self.channels = []
         for channel in range(0, 5):
-            self.channels.append(VirtualUART(timeout_ms=5000))
+            self.channels.append(CmuxChannel())
 
         # Tabla de CRC precomputada
         self.crctable = [
@@ -57,7 +71,7 @@ class cmux():
         ]
 
         # Send the AT command to start CMUX protocol
-        if send_at(uartModem, "AT+CMUX=0", wait_time=0.5) == "AT+CMUX=0\r\r\nOK\r\n":
+        if send_at(self.physicalUART, "AT+CMUX=0", wait_time=0.5) == "AT+CMUX=0\r\r\nOK\r\n":
             self.cmuxProtocolStarted = True
             # Start parallel thread to handle the cmux protocol layer
             started = False
@@ -105,8 +119,7 @@ class cmux():
     
 
     def openChannel(self, channel):
-        self.channels[channel].clear_buffer_in()
-        self.channels[channel].clear_buffer_out()
+        self.channels[channel].clear_uarts_buffers()
         self.channels[channel].uaReceived = False
         if type(channel) == int and channel >= 0 and channel <= 4:
             self.channels[channel].status = CHANNEL_CLOSED
@@ -116,7 +129,7 @@ class cmux():
             print(f"Opening channel {channel}")
             addressByte = (channel << 2 | 3).to_bytes(1, "big")
             address_control_length = addressByte + b'\x3F\x01'
-            self.uartModem.write(b'\xF9' + address_control_length + self.fcs(address_control_length) + b'\xF9')
+            self.physicalUART.write(b'\xF9' + address_control_length + self.fcs(address_control_length) + b'\xF9')
             
             # Wait for UA response
             n = 0
@@ -131,9 +144,9 @@ class cmux():
 
                     # Send MSC message to set V.24 signals enabling the channel
                     address_control_length = b'\x03\xEF\x09'
-                    self.uartModem.write(b'\xF9' + address_control_length +
-                                         b'\xE3\x05' + addressByte + b'\x0D' +
-                                         self.fcs(address_control_length) + b'\xF9')
+                    self.physicalUART.write(b'\xF9' + address_control_length +
+                                            b'\xE3\x05' + addressByte + b'\x0D' +
+                                            self.fcs(address_control_length) + b'\xF9')
                     
                     # Wait for response to MSC message
                     n = 0
@@ -155,21 +168,21 @@ class cmux():
     def send_at(self, at_cmd, channel=None):
         # UIH frame example for "AT" command: b'\xF9\x07\xEF\x09AT\r\n\x58\xF9'
 
-        # Send At command into a cmux frame
+        # Send AT command into a cmux frame
         addressByte = (channel << 2 | 3).to_bytes(1, "big")
         length = (len(at_cmd) + 2 << 1 | 1).to_bytes(1, "big")
         address_control_length = addressByte + b'\xEF' + length
         message = b'\xF9' + address_control_length + at_cmd + "\r\n" + self.fcs(address_control_length) + b'\xF9'
-        self.uartModem.write(message)
+        self.physicalUART.write(message)
 
         # Receive the unpacked response in the virtual channel
         completeResponse = ""
-        if self.channels[channel].any():
-            data = self.channels[channel].read()
+        if self.channels[channel].virtualUARTconn.ucUART.any(timeout_ms=3000):
+            data = self.channels[channel].virtualUARTconn.ucUART.read()
             while data:
                 # Response example for "AT" command over channel 1 containing 2 segments (flags removed by the split):
                 #   AT\r\r\r\nOK\r\n
                 completeResponse = completeResponse + data.decode("utf-8")
                 sleep(0.1)
-                data = self.channels[channel].read()
+                data = self.channels[channel].virtualUARTconn.ucUART.read()
         return completeResponse

@@ -20,23 +20,23 @@ def cmux_handler(cmux):
 
     while cmux.cmuxProtocolStarted:
         # Read the physical UART and add it to the cmux buffer
-        newFrames = cmux.uartModem.read()
+        newFrames = cmux.physicalUART.read()
         if newFrames:
-            cmux.uartBufferIn = cmux.uartBufferIn + newFrames
+            cmux.physicalUartBufferIn = cmux.physicalUartBufferIn + newFrames
 
-        startFlagIndex = cmux.uartBufferIn.find(b'\xF9')
+        startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9')
         while startFlagIndex >= 0:
             validFrame = False
             try:
                 # Try to get a frame and its basic parts
-                addressByte = cmux.uartBufferIn[startFlagIndex + 1]
+                addressByte = cmux.physicalUartBufferIn[startFlagIndex + 1]
                 channel = addressByte >> 2
-                controlByte = cmux.uartBufferIn[startFlagIndex + 2]
-                lengthByte = cmux.uartBufferIn[startFlagIndex + 3]
+                controlByte = cmux.physicalUartBufferIn[startFlagIndex + 2]
+                lengthByte = cmux.physicalUartBufferIn[startFlagIndex + 3]
                 length = lengthByte >> 1
 
-                if length + 6 <= len(cmux.uartBufferIn):
-                    frame = cmux.uartBufferIn[startFlagIndex : startFlagIndex + 6 + length]
+                if length + 6 <= len(cmux.physicalUartBufferIn):
+                    frame = cmux.physicalUartBufferIn[startFlagIndex : startFlagIndex + 6 + length]
 
                     if frame[0] == 0xF9 and frame[-1] == 0xF9:
                         frame = frame[1:-1]
@@ -78,8 +78,8 @@ def cmux_handler(cmux):
                                         elif frame[0] != 0x01:
                                             # Data frame --> Example: b'\x05\xEF\x07AT\r\xB2'
                                             if cmux.channels[channel].pppUart is None:
-                                                # Send data to the virtual UART
-                                                cmux.channels[channel].input(frame[3:-1])
+                                                # Send data from de modem's virtual UART to the uc's virtual UART
+                                                cmux.channels[channel].virtualUARTconn.modemUART.write(frame[3:-1])
                                                 validFrame = True
                                             else:
                                                 # Send data to the physical UART for PPP
@@ -95,34 +95,34 @@ def cmux_handler(cmux):
                         else:
                             print(f"Wrong address byte in frame: {frame}")
 
-                # Remove the left part of the uartBufferIn if a good frame was processed
+                # Remove the left part of the physicalUartBufferIn if a good frame was processed
                 if validFrame:
-                    cmux.uartBufferIn = cmux.uartBufferIn[startFlagIndex + 5 + length + 1 : ]
+                    cmux.physicalUartBufferIn = cmux.physicalUartBufferIn[startFlagIndex + 5 + length + 1 : ]
                     startFlagIndex = -1
 
-                # Look for any other possible frame in the uartBufferIn
-                startFlagIndex = cmux.uartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                # Look for any other possible frame in the physicalUartBufferIn
+                startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
 
             except Exception as error:
                 print("Error processing an incoming frame in cmux_handler: " +  str(error))
-                startFlagIndex = cmux.uartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
 
         sleep(0.05)
 
-        # Process buffer_out for each data channel (1 to 4)
+        # Process output for each data channel (1 to 4)
         for channel in range(1, 5):
             if cmux.channels[channel].status == CHANNEL_READY:
                 if cmux.channels[channel].pppUart is None:
-                    # Read data from virtual UART
-                    data = cmux.channels[channel].output()
+                    # Read data arrived to modem's virtual UART from uc's virtual UART
+                    data = cmux.channels[channel].virtualUARTconn.modemUART.read()
                 else:
                     # Read data from physical UART (PPP)
                     data = cmux.channels[channel].pppUart.read()
                 if data:
-                    # Some data to pack and send into a cmux frame
+                    # Some data to pack and send to physical UART into a cmux frame
                     addressByte = (channel << 2 | 3).to_bytes(1, "big")
                     length = (len(data) << 1 | 1).to_bytes(1, "big")
                     address_control_length = addressByte + b'\xEF' + length
-                    cmux.uartModem.write(b'\xF9' + address_control_length + data + cmux.fcs(address_control_length) + b'\xF9')
+                    cmux.physicalUART.write(b'\xF9' + address_control_length + data + cmux.fcs(address_control_length) + b'\xF9')
 
         sleep(0.05)

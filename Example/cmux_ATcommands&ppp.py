@@ -25,8 +25,8 @@ print()
 print("Cleaning initializing garbage from channel 1...")
 response = True
 while response:
-    if cmux7608.channels[1].any():
-        response = cmux7608.channels[1].read()
+    if cmux7608.channels[1].virtualUARTconn.ucUART.any(timeout_ms=4000):
+        response = cmux7608.channels[1].virtualUARTconn.ucUART.read()
         print(f"From channel 1: {response}")
     else:
         response = None
@@ -58,7 +58,7 @@ print(f"AT command response on channel 1 to activate PPP: {response}")
 
 # Start PPPoS protocol
 print("Start PPPoS protocol")
-ppp = network.PPP(cmux7608.channels[1])
+ppp = network.PPP(cmux7608.channels[1].virtualUARTconn.ucUART)
 ppp.active(True)
 ppp.connect()
 
