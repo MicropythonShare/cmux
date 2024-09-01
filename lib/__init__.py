@@ -37,8 +37,10 @@ class CmuxChannel():
 
 
     def clear_uarts_buffers(self):
-        uarts = self.virtualUARTconn.ucUART.clear_rx()
-        uarts = self.virtualUARTconn.modemUART.clear_rx()
+        while self.virtualUARTconn.ucUART.any():
+            self.virtualUARTconn.ucUART.read()
+        while self.virtualUARTconn.modemUART.any():
+            self.virtualUARTconn.modemUART.read()
 
 
 class cmux():
@@ -177,7 +179,8 @@ class cmux():
 
         # Receive the unpacked response in the virtual channel
         completeResponse = ""
-        if self.channels[channel].virtualUARTconn.ucUART.any(timeout_ms=3000):
+        ucUART = self.channels[channel].virtualUARTconn.ucUART
+        if self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=3000):
             data = self.channels[channel].virtualUARTconn.ucUART.read()
             while data:
                 # Response example for "AT" command over channel 1 containing 2 segments (flags removed by the split):

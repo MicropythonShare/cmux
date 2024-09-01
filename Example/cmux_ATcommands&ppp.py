@@ -24,8 +24,9 @@ print()
 
 print("Cleaning initializing garbage from channel 1...")
 response = True
+ucUART = cmux7608.channels[1].virtualUARTconn.ucUART
 while response:
-    if cmux7608.channels[1].virtualUARTconn.ucUART.any(timeout_ms=4000):
+    if cmux7608.channels[1].virtualUARTconn.wait_any(ucUART, timeout_ms=4000):
         response = cmux7608.channels[1].virtualUARTconn.ucUART.read()
         print(f"From channel 1: {response}")
     else:
@@ -73,7 +74,8 @@ while True:
     # print()
 
     # Send a request via PPP on channel 1
-    print(urequests.get(url="http://checkip.amazonaws.com/"))
+    print("Response from urequests to http://checkip.amazonaws.com/:")
+    print(urequests.get(url="http://checkip.amazonaws.com/").text)
     print()
 
     # Send AT command via channel 2 again
