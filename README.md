@@ -4,9 +4,6 @@ This library was developed and tested on an ESP32 S3 connected to a SIMCom A7608
 a class (cmux) to handle 4 virtual UARTs (multiplexed channels on the physical UART), plus a control channel.
 Each virtual UART can be used independently to send AT commands to the A7608SA-H, or to set a transparent data 
 channel to stablish PPPoS network connection.
-The PPP connection is currently not working because the VirtualUART class needs to be adjusted to emulate the physical 
-UART required by the Micropython PPP service (work in progress and accepting collaboration from developers to complete 
-it :-) )...
 
 The cmux class was developed following the standard definitions from 3GPP TS 07.10 V7.2.0 specifications 
 (https://www.3gpp.org/ftp/Specs/archive/07_series/07.10/), and adjusted to the SIMCom modems with the help of this 
@@ -33,5 +30,4 @@ it will be used to set the PPP network connection like this:
     ppp.active(True)
     ppp.connect()
 
-Try it, enjoy it and if you think that you can help to finish the VirtualUART class so it can be correctly used by 
-the network.ppp service, please let me know. Your collaboration on this is absolutely welcome :-)
+The virtualUARTconn class depends on RingIO, a new ringbuffer class developed by [Andre Leech](https://github.com/pi-anl) in this PR (https://github.com/micropython/micropython/compare/master...andrewleech:micropython:ringio_link) and not officially available in a MicroPython release yet.
