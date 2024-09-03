@@ -10,6 +10,7 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     
     # Send AT command. Waiting time for response is configurable (seconds).
 
+    wait_time = wait_time * 1000
     uart.read()  # Clean buffer
     print(at_cmd)
     at_cmd = at_cmd + "\r\n"
