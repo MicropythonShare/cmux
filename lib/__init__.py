@@ -10,6 +10,7 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     
     # Send AT command. Waiting time for response is configurable (seconds).
 
+    wait_time = wait_time * 1000
     uart.read()  # Clean buffer
     print(at_cmd)
     at_cmd = at_cmd + "\r\n"
@@ -17,9 +18,18 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     sentBytes = uart.write(at_cmd_bytes)
 
     if debug_mode:
-        sleep(wait_time)
-        data = uart.read()
-        if data is None:
+        data = b''
+        isDone = False
+        while not isDone:
+            startTime = ticks_ms()
+            while not uart.any() and ticks_diff(ticks_ms(), startTime) < wait_time:
+                sleep(0.1)
+            if ticks_diff(ticks_ms(), startTime) > wait_time:
+                isDone = True
+            nextData = uart.read()
+            if nextData:
+                data = data + nextData
+        if not data:
             print("...No response")
             return False
         else:
@@ -37,8 +47,10 @@ class CmuxChannel():
 
 
     def clear_uarts_buffers(self):
-        uarts = self.virtualUARTconn.ucUART.clear_rx()
-        uarts = self.virtualUARTconn.modemUART.clear_rx()
+        while self.virtualUARTconn.ucUART.any():
+            self.virtualUARTconn.ucUART.read()
+        while self.virtualUARTconn.modemUART.any():
+            self.virtualUARTconn.modemUART.read()
 
 
 class cmux():
@@ -177,12 +189,14 @@ class cmux():
 
         # Receive the unpacked response in the virtual channel
         completeResponse = ""
-        if self.channels[channel].virtualUARTconn.ucUART.any(timeout_ms=3000):
+        ucUART = self.channels[channel].virtualUARTconn.ucUART
+        if self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=3000):
             data = self.channels[channel].virtualUARTconn.ucUART.read()
             while data:
                 # Response example for "AT" command over channel 1 containing 2 segments (flags removed by the split):
                 #   AT\r\r\r\nOK\r\n
                 completeResponse = completeResponse + data.decode("utf-8")
                 sleep(0.1)
+                self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=3000)
                 data = self.channels[channel].virtualUARTconn.ucUART.read()
         return completeResponse

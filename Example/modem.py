@@ -1,11 +1,12 @@
 from machine import Pin, UART
-from time import sleep
+from time import sleep, ticks_diff, ticks_ms
 
 
 def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     
     # Send AT command. Waiting time for response is configurable (seconds).
 
+    wait_time = wait_time * 1000
     uart.read()  # Clean buffer
     print(at_cmd)
     at_cmd = at_cmd + "\r\n"
@@ -13,9 +14,18 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     sentBytes = uart.write(at_cmd_bytes)
 
     if debug_mode:
-        sleep(wait_time)
-        data = uart.read()
-        if data is None:
+        data = b''
+        isDone = False
+        while not isDone:
+            startTime = ticks_ms()
+            while not uart.any() and ticks_diff(ticks_ms(), startTime) < wait_time:
+                sleep(0.1)
+            if ticks_diff(ticks_ms(), startTime) > wait_time:
+                isDone = True
+            nextData = uart.read()
+            if nextData:
+                data = data + nextData
+        if not data:
             print("...No response")
             return False
         else:

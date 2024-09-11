@@ -3,19 +3,48 @@ from time import sleep
 from .cmux_constants import *
 
 
+def calculateLength(buffer, lengthPosition):
+    # Data length calculation
+    lengthByte1 = buffer[lengthPosition]
+    if not lengthByte1 & 1:
+        # LSB is 0 --> 2 bytes for length of data (dropping LSB of each byte and joining the 14 remaining bits)
+        lengthByte2 = buffer[lengthPosition + 1]
+        
+        # Will use the 8 bits of lengthByte2 but shifting one bit into MSB of shifted lengthByte1
+        if lengthByte2 & 1:
+            lengthByte1 = (lengthByte1 >> 1) | 128
+        else:
+            lengthByte1 = lengthByte1 >> 1
+        lengthByte2 = lengthByte2 >> 1
+        
+        lengthBytes = lengthByte2.to_bytes(1, "big") + lengthByte1.to_bytes(1, "big")
+        length = int.from_bytes(lengthBytes, "big")
+        bytesForLength = 2
+    else:
+        # LSB is 1 --> 1 byte for length of data
+        length = lengthByte1 >> 1
+        bytesForLength = 1
+        
+    return length, bytesForLength
+
+
+
 def cmux_handler(cmux):
     """
-    Una async task con la instancia cmux para esta secuencia cíclica:
+    Un thread con la instancia cmux para esta secuencia cíclica:
         - Lee la UART física:
             - Desempaqueta y procesa todos los frames UIH de control (dirigidos al canal 0 para acciones sobre cualquier canal):
                 - MSN, PSC, CLD, FCoff, FCon
             - Desempaqueta y procesa otros comandos dirigidos a cualquier canal:
                 - SABM, UA, DM, DISC
-            - Desempaqueta frames UIH y reenvía el payload al buffer_in del canal correspondiente (1 al 4)
+            - Desempaqueta frames UIH y reenvía el payload a la UART virtual del canal correspondiente (1 al 4)
 
-        - Revisa los buffer_out de cada canal en secuencia:
-            - Solo se revisa el buffer de los canales que tengan status = CHANNEL_READY
-            - Si hay data en un buffer_out revisado, la empaqueta y envía por la UART física con una UIH Frame
+        - Lee las UARTs virtuales de los 4 canales en secuencia:
+            - Solo se lee la UART virtual de cada uno los canales que tengan status = CHANNEL_READY
+            - Si hay data en una UART virtual revisada, la empaqueta y envía por la UART física con una UIH Frame
+
+        - Este thread puede detenerse desde el programa principal colcando:
+            cmux.cmuxProtocolStarted = False
     """
 
     while cmux.cmuxProtocolStarted:
@@ -32,18 +61,17 @@ def cmux_handler(cmux):
                 addressByte = cmux.physicalUartBufferIn[startFlagIndex + 1]
                 channel = addressByte >> 2
                 controlByte = cmux.physicalUartBufferIn[startFlagIndex + 2]
-                lengthByte = cmux.physicalUartBufferIn[startFlagIndex + 3]
-                length = lengthByte >> 1
+                length, bytesForLength = calculateLength(cmux.physicalUartBufferIn, startFlagIndex + 3)
 
-                if length + 6 <= len(cmux.physicalUartBufferIn):
-                    frame = cmux.physicalUartBufferIn[startFlagIndex : startFlagIndex + 6 + length]
-
+                if length + 5 + bytesForLength <= len(cmux.physicalUartBufferIn):
+                    frame = cmux.physicalUartBufferIn[startFlagIndex : startFlagIndex + 5 + bytesForLength + length]
+                    
                     if frame[0] == 0xF9 and frame[-1] == 0xF9:
                         frame = frame[1:-1]
                         fcsByte = frame[-1]
                         if channel >= 0 and channel <= 4:
-                            if cmux.check_fcs(frame[0:3], fcsByte):
-                                if len(frame[3:-1]) == length:
+                            if cmux.check_fcs(frame[0: 2 + bytesForLength], fcsByte):
+                                if len(frame[2 + bytesForLength:-1]) == length:
 
                                     if controlByte == 0x3F:
                                         # SABM frame (I guess this one is never incoming)
@@ -65,11 +93,11 @@ def cmux_handler(cmux):
                                         
                                     elif controlByte == 0xEF | 0xFF: # UBLOX modem uses OxFF for controlByte?
                                         # UIH frame
-                                        if frame[0] == 0x01 and frame[3] == 0xE1:
+                                        if frame[0] == 0x01 and frame[2 + bytesForLength] == 0xE1:
                                             # MSC frame --> Example: F9 01 EF 09 E1 05 0B 0D 9A F9
                                             mscTargetChannel = frame[-3] >> 2
-                                            mscLength = frame[4] >> 1
-                                            if mscLength == len(frame[5:-1]):
+                                            mscLength, bytesForMscLength = calculateLength(frame, 3 + bytesForLength)
+                                            if mscLength == len(frame[3 + bytesForLength + bytesForMscLength : -1]):
                                                 cmux.channels[mscTargetChannel].v24Signals = frame[-2]
                                                 validFrame = True
                                             else:
@@ -78,12 +106,12 @@ def cmux_handler(cmux):
                                         elif frame[0] != 0x01:
                                             # Data frame --> Example: b'\x05\xEF\x07AT\r\xB2'
                                             if cmux.channels[channel].pppUart is None:
-                                                # Send data from de modem's virtual UART to the uc's virtual UART
-                                                cmux.channels[channel].virtualUARTconn.modemUART.write(frame[3:-1])
+                                                # Send data from the modem's virtual UART to the uc's virtual UART
+                                                cmux.channels[channel].virtualUARTconn.modemUART.write(frame[2 + bytesForLength : -1])
                                                 validFrame = True
                                             else:
                                                 # Send data to the physical UART for PPP
-                                                cmux.channels[channel].pppUart.write(frame[3:-1])
+                                                cmux.channels[channel].pppUart.write(frame[2 + bytesForLength : -1])
                                                 validFrame = True
                                         else:
                                             print("Unknown UIH frame: {frame}")
@@ -97,7 +125,7 @@ def cmux_handler(cmux):
 
                 # Remove the left part of the physicalUartBufferIn if a good frame was processed
                 if validFrame:
-                    cmux.physicalUartBufferIn = cmux.physicalUartBufferIn[startFlagIndex + 5 + length + 1 : ]
+                    cmux.physicalUartBufferIn = cmux.physicalUartBufferIn[startFlagIndex + 4 + bytesForLength + length + 1 : ]
                     startFlagIndex = -1
 
                 # Look for any other possible frame in the physicalUartBufferIn
