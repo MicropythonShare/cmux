@@ -6,11 +6,11 @@ from .cmux_handler import cmux_handler
 from .virtual_uart import VitualUARTConn
 
 
-def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
+def send_at(uart, at_cmd, timeout_secs=0, debug_mode=True):
     
     # Send AT command. Waiting time for response is configurable (seconds).
 
-    wait_time = wait_time * 1000
+    timeout_ms = timeout_secs * 1000
     uart.read()  # Clean buffer
     print(at_cmd)
     at_cmd = at_cmd + "\r\n"
@@ -20,11 +20,11 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     if debug_mode:
         data = b''
         isDone = False
+        startTime = ticks_ms()
         while not isDone:
-            startTime = ticks_ms()
-            while not uart.any() and ticks_diff(ticks_ms(), startTime) < wait_time:
+            while not uart.any() and ticks_diff(ticks_ms(), startTime) < timeout_ms:
                 sleep(0.1)
-            if ticks_diff(ticks_ms(), startTime) > wait_time:
+            if ticks_diff(ticks_ms(), startTime) > timeout_ms:
                 isDone = True
             nextData = uart.read()
             if nextData:
@@ -39,7 +39,7 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
 
 class CmuxChannel():
     def __init__(self):
-        self.virtualUARTconn = VitualUARTConn("ucUART", "modemUART", 2048)
+        self.virtualUARTconn = VitualUARTConn("ucUART", "modemUART", 8192)
         self.uaReceived = False
         self.status = CHANNEL_CLOSED
         self.v24Signals = None
@@ -83,7 +83,8 @@ class cmux():
         ]
 
         # Send the AT command to start CMUX protocol
-        if send_at(self.physicalUART, "AT+CMUX=0", wait_time=0.5) == "AT+CMUX=0\r\r\nOK\r\n":
+        maxFrameZize = 1500
+        if "OK" in send_at(self.physicalUART, f"AT+CMUX=0,0,5,{maxFrameZize},0,0,600", timeout_secs=1):
             self.cmuxProtocolStarted = True
             # Start parallel thread to handle the cmux protocol layer
             started = False
@@ -177,7 +178,9 @@ class cmux():
             raise Exception("Channel must be an int from 0 to 4")
 
 
-    def send_at(self, at_cmd, channel=None):
+    def send_at(self, at_cmd, channel=None, timeout_secs=0.5):
+        timeout_ms = timeout_secs * 1000
+        
         # UIH frame example for "AT" command: b'\xF9\x07\xEF\x09AT\r\n\x58\xF9'
 
         # Send AT command into a cmux frame
@@ -190,13 +193,13 @@ class cmux():
         # Receive the unpacked response in the virtual channel
         completeResponse = ""
         ucUART = self.channels[channel].virtualUARTconn.ucUART
-        if self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=3000):
+        if self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=timeout_ms):
             data = self.channels[channel].virtualUARTconn.ucUART.read()
             while data:
                 # Response example for "AT" command over channel 1 containing 2 segments (flags removed by the split):
                 #   AT\r\r\r\nOK\r\n
                 completeResponse = completeResponse + data.decode("utf-8")
                 sleep(0.1)
-                self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=3000)
+                self.channels[channel].virtualUARTconn.wait_any(ucUART, timeout_ms=timeout_ms)
                 data = self.channels[channel].virtualUARTconn.ucUART.read()
         return completeResponse
