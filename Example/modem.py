@@ -16,8 +16,8 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
     if debug_mode:
         data = b''
         isDone = False
+        startTime = ticks_ms()
         while not isDone:
-            startTime = ticks_ms()
             while not uart.any() and ticks_diff(ticks_ms(), startTime) < wait_time:
                 sleep(0.1)
             if ticks_diff(ticks_ms(), startTime) > wait_time:
@@ -25,6 +25,10 @@ def send_at(uart, at_cmd, wait_time=0, debug_mode=True):
             nextData = uart.read()
             if nextData:
                 data = data + nextData
+        """
+        sleep(wait_time)
+        data = uart.read()
+        """
         if not data:
             print("...No response")
             return False
@@ -70,6 +74,21 @@ def startModem():
     modemPowerKey.on()
     sleep(1)
     modemPowerKey.off()
+
+    # Wait for all the initialization messages:
+    print("Wait for initialization...")
+    startTime = ticks_ms()
+    messages = ""
+    while not "PB DONE" in str(messages) and ticks_diff(ticks_ms(), startTime) < 16000:
+        sleep(1)
+        messages = uartModem.read()
+        try:
+            if messages:
+                messages = messages.decode("utf-8")
+                print(messages)
+                print("Wait...")
+        except:
+            pass
 
     # Wait for AT commands to be responsive from A7608 chip
     while not send_at(uartModem, "AT", wait_time=1):
