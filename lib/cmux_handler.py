@@ -3,11 +3,14 @@ from time import sleep
 from .cmux_constants import *
 
 
-def calculateLength(buffer, lengthPosition):
+def calculateLength(buffer, lengthPosition, attempts=0):
     # Data length calculation
     lengthByte1 = buffer[lengthPosition]
+
     if not lengthByte1 & 1:
-        # LSB is 0 --> 2 bytes for length of data (dropping LSB of each byte and joining the 14 remaining bits)
+        # LSB is 0 --> 2 bytes for length of data (dropping LSB of lengthByte1 and joining to lengthByte2 like this:
+        # lengthByte2_(lengthByte1 >> 1)
+        
         lengthByte2 = buffer[lengthPosition + 1]
         
         # Will use the 8 bits of lengthByte2 but shifting one bit into MSB of shifted lengthByte1
@@ -26,7 +29,6 @@ def calculateLength(buffer, lengthPosition):
         bytesForLength = 1
         
     return length, bytesForLength
-
 
 
 def cmux_handler(cmux):
@@ -53,15 +55,23 @@ def cmux_handler(cmux):
         if newFrames:
             cmux.physicalUartBufferIn = cmux.physicalUartBufferIn + newFrames
 
-        startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9')
+        startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', 0)
+        attempts = 0
         while startFlagIndex >= 0:
             validFrame = False
+            if cmux.physicalUartBufferIn[startFlagIndex : startFlagIndex + 3]== b'\xf9?\xf9':
+                # Discard b'\xf9?\xf9' frame
+                cmux.physicalUartBufferIn = cmux.physicalUartBufferIn[startFlagIndex + 3 : ]
+                # Look for any other possible frame in the physicalUartBufferIn
+                startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', 0)
+                continue
+
             try:
                 # Try to get a frame and its basic parts
                 addressByte = cmux.physicalUartBufferIn[startFlagIndex + 1]
                 channel = addressByte >> 2
                 controlByte = cmux.physicalUartBufferIn[startFlagIndex + 2]
-                length, bytesForLength = calculateLength(cmux.physicalUartBufferIn, startFlagIndex + 3)
+                length, bytesForLength = calculateLength(cmux.physicalUartBufferIn, startFlagIndex + 3, attempts)
 
                 if length + 5 + bytesForLength <= len(cmux.physicalUartBufferIn):
                     frame = cmux.physicalUartBufferIn[startFlagIndex : startFlagIndex + 5 + bytesForLength + length]
@@ -127,13 +137,41 @@ def cmux_handler(cmux):
                 if validFrame:
                     cmux.physicalUartBufferIn = cmux.physicalUartBufferIn[startFlagIndex + 4 + bytesForLength + length + 1 : ]
                     startFlagIndex = -1
-
-                # Look for any other possible frame in the physicalUartBufferIn
-                startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                    # Look for any other possible frame in the physicalUartBufferIn
+                    startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                    attempts = 0
+                elif attempts < 2:
+                    # Add any additional bytes from the UART (that maybe will complete a segmented frame)
+                    newFrames = cmux.physicalUART.read()
+                    if newFrames:
+                        cmux.physicalUartBufferIn = cmux.physicalUartBufferIn + newFrames
+                    attempts = attempts + 1
+                else:
+                    # Add any additional bytes from the UART (that maybe will complete a segmented frame)
+                    newFrames = cmux.physicalUART.read()
+                    if newFrames:
+                        cmux.physicalUartBufferIn = cmux.physicalUartBufferIn + newFrames
+                    # Look for any other possible frame in the physicalUartBufferIn
+                    startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                    attempts = 0
 
             except Exception as error:
                 print("Error processing an incoming frame in cmux_handler: " +  str(error))
-                startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                if attempts < 2:
+                    # Add any additional bytes from the UART (that maybe will complete a segmented frame)
+                    sleep(0.50)
+                    newFrames = cmux.physicalUART.read()
+                    if newFrames:
+                        cmux.physicalUartBufferIn = cmux.physicalUartBufferIn + newFrames
+                    attempts = attempts + 1
+                else:
+                    # Add any additional bytes from the UART (that maybe will complete a segmented frame)
+                    newFrames = cmux.physicalUART.read()
+                    if newFrames:
+                        cmux.physicalUartBufferIn = cmux.physicalUartBufferIn + newFrames
+                    # Look for any other possible frame in the physicalUartBufferIn
+                    startFlagIndex = cmux.physicalUartBufferIn.find(b'\xF9', startFlagIndex + 1)
+                    attempts = 0
 
         sleep(0.05)
 
@@ -142,14 +180,22 @@ def cmux_handler(cmux):
             if cmux.channels[channel].status == CHANNEL_READY:
                 if cmux.channels[channel].pppUart is None:
                     # Read data arrived to modem's virtual UART from uc's virtual UART
-                    data = cmux.channels[channel].virtualUARTconn.modemUART.read()
+                    data = cmux.channels[channel].virtualUARTconn.modemUART.read(1500)
                 else:
                     # Read data from physical UART (PPP)
                     data = cmux.channels[channel].pppUart.read()
                 if data:
                     # Some data to pack and send to physical UART into a cmux frame
                     addressByte = (channel << 2 | 3).to_bytes(1, "big")
-                    length = (len(data) << 1 | 1).to_bytes(1, "big")
+                    if len(data) <= 127:
+                        length = (len(data) << 1 | 1).to_bytes(1, "big")
+                    else:
+                        lengthBytes = len(data).to_bytes(2, "big")
+                        lengthByte2 = lengthBytes[0] << 1
+                        if lengthBytes[1] & 128:
+                            lengthByte2 = lengthByte2 | 1
+                        lengthByte1 = lengthBytes[1] << 1
+                        length = lengthByte1.to_bytes(1, "big") + lengthByte2.to_bytes(1, "big")
                     address_control_length = addressByte + b'\xEF' + length
                     cmux.physicalUART.write(b'\xF9' + address_control_length + data + cmux.fcs(address_control_length) + b'\xF9')
 
