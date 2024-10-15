@@ -100,8 +100,8 @@ def cmux_handler(cmux):
                                     elif controlByte == 0x53:
                                         ## TODO: DISC frame
                                         validFrame = True
-
-                                    elif controlByte == 0xEF:
+                                        
+                                    elif controlByte == 0xEF | 0xFF: # UBLOX modem uses OxFF for controlByte?
                                         # UIH frame
                                         if frame[0] == 0x01 and frame[2 + bytesForLength] == 0xE1:
                                             # MSC frame --> Example: F9 01 EF 09 E1 05 0B 0D 9A F9
